@@ -63,20 +63,74 @@ export default function insider(): Plugin {
     });
   }
 
+  // --- sourcemap remap: compiled line:col -> authored line:col ---------------
+  // React 19's _debugStack yields positions in the vite-transformed module; the
+  // dev server holds that module's sourcemap, so remap before answering.
+
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  // decode a sourcemap "mappings" string -> per generated line: sorted [genCol, origLine, origCol]
+  function decodeMappings(mappings: string): number[][][] {
+    const lines: number[][][] = [];
+    let srcIdx = 0, origLine = 0, origCol = 0;
+    for (const lineStr of mappings.split(";")) {
+      const segs: number[][] = [];
+      let genCol = 0;
+      for (const segStr of lineStr.split(",")) {
+        if (!segStr) continue;
+        const nums: number[] = [];
+        let value = 0, shift = 0;
+        for (const ch of segStr) {
+          const d = B64.indexOf(ch);
+          value |= (d & 31) << shift;
+          if (d & 32) shift += 5;
+          else { nums.push(value & 1 ? -(value >>> 1) : value >>> 1); value = 0; shift = 0; }
+        }
+        genCol += nums[0];
+        if (nums.length >= 4) {
+          srcIdx += nums[1]; origLine += nums[2]; origCol += nums[3];
+          if (srcIdx === 0) segs.push([genCol, origLine, origCol]);
+        }
+      }
+      lines.push(segs);
+    }
+    return lines;
+  }
+
+  const mapCache = new WeakMap<object, number[][][]>();
+
+  function remap(urlPath: string, line: number, col: number, server: ViteDevServer): { line: number; col: number } | null {
+    const mod = server.moduleGraph.urlToModuleMap.get(urlPath);
+    const map = mod?.transformResult?.map as { mappings?: string } | null | undefined;
+    if (!map?.mappings) return null;
+    let decoded = mapCache.get(map);
+    if (!decoded) { decoded = decodeMappings(map.mappings); mapCache.set(map, decoded); }
+    const segs = decoded[line - 1];
+    if (!segs?.length) return null;
+    let best = segs[0];
+    for (const s of segs) { if (s[0] <= col - 1) best = s; else break; }
+    return { line: best[1] + 1, col: best[2] + 1 };
+  }
+
   // source paths leave the tool project-relative, never absolute
-  function relativizeSrc(v: unknown): unknown {
-    if (Array.isArray(v)) return v.map(relativizeSrc);
+  function relativizeSrc(v: unknown, server: ViteDevServer): unknown {
+    if (Array.isArray(v)) return v.map((x) => relativizeSrc(x, server));
     if (v && typeof v === "object") {
       const o = { ...(v as Record<string, unknown>) };
       if (typeof o.src === "string") {
-        const m = o.src.match(/^(.*?)((?::\d+){0,2})$/)!;
+        const m = o.src.match(/^(.*?)(?::(\d+))?(?::(\d+))?$/)!;
         if (isAbsolute(m[1])) {
+          // React <=18 _debugSource: absolute fs path, already authored lines
           const rel = relative(root, m[1]);
           if (rel.startsWith("..")) delete o.src;
-          else o.src = rel.replace(/\\/g, "/") + m[2];
+          else o.src = rel.replace(/\\/g, "/") + (m[2] ? ":" + m[2] + (m[3] ? ":" + m[3] : "") : "");
+        } else if (m[2]) {
+          // React 19 stack path: root-relative URL, compiled lines -> remap via module graph
+          const r = remap("/" + m[1], Number(m[2]), Number(m[3] ?? 1), server);
+          if (r) o.src = m[1] + ":" + r.line + ":" + r.col;
         }
       }
-      for (const k of Object.keys(o)) o[k] = relativizeSrc(o[k]);
+      for (const k of Object.keys(o)) o[k] = relativizeSrc(o[k], server);
       return o;
     }
     return v;
@@ -181,7 +235,7 @@ export default function insider(): Plugin {
           }
 
           const data = (await ask(page, op, params, timeout)) as Record<string, unknown>;
-          const out = relativizeSrc(data) as Record<string, unknown>;
+          const out = relativizeSrc(data, server) as Record<string, unknown>;
           if (!out.error && !out.next) out.next = nextHint(op);
           send(res, 200, out);
           return;

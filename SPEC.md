@@ -11,7 +11,7 @@ Gives a coding agent the ground truth of a rendered UI as structured text, cheap
 
 ## Protocol: AXI (https://axi.md)
 
-* Agents interact through a CLI with subcommands, one per operation (status, overview, read, find).
+* Agents interact through a CLI with subcommands, one per operation (status, overview, read, find, snap).
 * The dev server's URL is always the first parameter: `insider <dev-server-url> <subcommand> [flags]` — that is what the CLI connects to.
 * Output is compact JSON: short keys, absent facts omitted (never null), minimal default fields per item.
 * Responses include pre-computed aggregates (counts, totals) so no follow-up call is needed to summarize.
@@ -27,13 +27,21 @@ Gives a coding agent the ground truth of a rendered UI as structured text, cheap
 * Opt-in per call: geometry, authored class names, component inputs, accessibility facts, and surroundings (ancestors, siblings, stacking order at a point).
 * Each element carries: its type, its own text (never descendants'), the component that rendered it (real names only, never synthetic), the source location relative to the project, and the resolved styles the caller asked for.
 * The region root also states its rendered size and, when width is constrained by an ancestor, that constraint and which component imposes it.
-* Answers reflect the live page at the moment of asking, never a cached view.
+* Answers reflect the live page at the moment of asking — never a cached view, unless the caller explicitly targets a snapshot.
 
 ## Supporting operations
 
 * Status: which pages are connected (URL, title, viewport, last seen) and which is active.
 * Overview: a page's major regions, landmarks, and components, as entry points for region reads.
 * Find: elements by visible text, component name, or source reference; results are complete enough to act on without follow-up; counts bounded and adjustable.
+
+## Snapshots
+
+* The agent can capture a page's whole state in one call, optionally tagging it with a name, and gets a snapshot id back; snapshots can be listed and deleted (by id or tag), and live for the dev-server session (bounded in number).
+* A capture holds everything later questions may need — all elements including hidden ones, geometry, resolved styles, component and source mapping, inputs, accessibility facts — so the same read/find/overview questions run unchanged against a snapshot id.
+* Refs inside a snapshot never go stale; the snapshot is immutable.
+* Staleness is always explicit: every snapshot answer names the snapshot and its age. Readiness conditions are rejected on snapshots — there is nothing to wait for.
+* The live page remains the default target; snapshots are only consulted when explicitly named.
 
 ## Response economy
 

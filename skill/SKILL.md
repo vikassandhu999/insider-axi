@@ -35,6 +35,19 @@ expensive),
 `--props` (component inputs), `--a11y`, `--context` (ancestors/siblings/stack),
 `--hidden`, `--wait "text[:ms]"` (readiness), `--page p`.
 
+## Snapshots
+
+```
+insider <url> snap --tag before-fix       # capture whole page -> {"snap":"s1","tag":"before-fix",...}
+insider <url> snap ls | snap rm before-fix
+insider <url> read ref:e6 --styles padding --snap before-fix   # query the frozen state (id or tag)
+```
+
+Use a snapshot when you need a stable "before" (capture, edit code, compare
+against a fresh live read) or when refs must survive reloads. Snapshot answers
+carry `snap` + `ageMs` — the facts are from capture time, not now. Never act on
+an old snapshot when the live page has since changed; re-read live to verify.
+
 ## Workflow
 
 1. `insider <url>` — confirm a page is connected.

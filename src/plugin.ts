@@ -6,9 +6,12 @@ import { dirname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin, ViteDevServer } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { snapRead, snapFind, snapOverview, type Snapshot } from "./snapquery.js";
+import { parseLocator } from "./shared.js";
 
 const BASE = "/__insider";
 const STALE_MS = 15_000;
+const MAX_SNAPS = 20;
 
 type Page = { id: string; url: string; title: string; viewport: unknown; lastSeen: number };
 type Pending = { resolve: (v: unknown) => void; timer: NodeJS.Timeout };
@@ -18,7 +21,9 @@ export default function insider(): Plugin {
   const queues = new Map<string, { id: string; op: string; params: unknown }[]>();
   const parked = new Map<string, ServerResponse>(); // one held poll per page
   const pending = new Map<string, Pending>();
+  const snaps = new Map<string, Snapshot>(); // dev-server session lifetime
   let nextReq = 1;
+  let nextSnap = 1;
   let root = "";
 
   function livePages(): Page[] {
@@ -195,6 +200,45 @@ export default function insider(): Plugin {
           return;
         }
 
+        if (path === "/snap" && !url.searchParams.has("rm") && !url.searchParams.has("ls")) {
+          if (snaps.size >= MAX_SNAPS)
+            return send(res, 200, { error: "snapshot limit (" + MAX_SNAPS + ") reached", hint: "insider <url> snap rm <id>" });
+          const page = resolvePage(url.searchParams.get("page"));
+          if ("error" in page) return send(res, 200, page);
+          const data = (await ask(page, "capture", {}, 15_000)) as any;
+          if (data.error) return send(res, 200, data);
+          const id = "s" + nextSnap++;
+          const tag = url.searchParams.get("tag") ?? undefined;
+          const snap: Snapshot = {
+            id, tag, page: page.id, url: data.url, title: data.title, viewport: data.viewport,
+            takenAt: Date.now(), root: relativizeSrc(data.root, server) as Snapshot["root"],
+          };
+          snaps.set(id, snap);
+          const count = JSON.stringify(snap.root).length;
+          send(res, 200, { snap: id, ...(tag ? { tag } : {}), url: snap.url, title: snap.title, bytes: count, next: "insider <url> overview --snap " + (tag ?? id) });
+          return;
+        }
+        if (path === "/snaps") {
+          send(res, 200, {
+            snaps: [...snaps.values()].map((s) => ({ snap: s.id, ...(s.tag ? { tag: s.tag } : {}), url: s.url, title: s.title, ageMs: Date.now() - s.takenAt })),
+            next: snaps.size ? "insider <url> read <locator> --snap <id|tag>" : "insider <url> snap",
+          });
+          return;
+        }
+        if (path === "/snap-rm") {
+          const key = url.searchParams.get("id") ?? "";
+          const hit = snaps.get(key) ?? [...snaps.values()].filter((s) => s.tag === key).sort((a, b) => b.takenAt - a.takenAt)[0];
+          if (!hit)
+            return send(res, 200, {
+              error: "unknown snapshot: " + key,
+              hint: "insider <url> snap ls",
+              exists: [...snaps.values()].map((s) => s.id + (s.tag ? " (" + s.tag + ")" : "")),
+            });
+          snaps.delete(hit.id);
+          send(res, 200, { removed: hit.id, ...(hit.tag ? { tag: hit.tag } : {}) });
+          return;
+        }
+
         if (path === "/status") {
           const live = livePages();
           send(res, 200, {
@@ -206,6 +250,42 @@ export default function insider(): Plugin {
         }
 
         if (path === "/overview" || path === "/read" || path === "/find") {
+          const snapId = url.searchParams.get("snap");
+          if (snapId) {
+            // id first, then tag (newest match wins)
+            const snap = snaps.get(snapId) ??
+              [...snaps.values()].filter((s) => s.tag === snapId).sort((a, b) => b.takenAt - a.takenAt)[0];
+            if (!snap)
+              return send(res, 200, {
+                error: "unknown snapshot: " + snapId,
+                hint: "insider <url> snap ls",
+                exists: [...snaps.values()].map((s) => s.id + (s.tag ? " (" + s.tag + ")" : "")),
+              });
+            if (url.searchParams.has("wait"))
+              return send(res, 200, { error: "--wait is meaningless on a snapshot", hint: "drop --wait or query the live page" });
+            let out: Record<string, unknown>;
+            if (path === "/overview") out = snapOverview(snap) as Record<string, unknown>;
+            else if (path === "/read") {
+              const locators = url.searchParams.getAll("l").map(parseLocator);
+              if (!locators.length || locators.some((l) => !l))
+                return send(res, 200, { error: "read needs valid locators", hint: "forms: role:x | text:x | ref:eN | point:x,y | src:path:line" });
+              const opts: Record<string, unknown> = {};
+              for (const f of ["hidden", "box", "classes", "props", "a11y", "context"])
+                if (url.searchParams.has(f)) opts[f] = true;
+              if (url.searchParams.has("depth")) opts.depth = Number(url.searchParams.get("depth"));
+              if (url.searchParams.has("styles")) opts.styles = url.searchParams.get("styles")!.split(",").map((s) => s.trim()).filter(Boolean);
+              out = snapRead(snap, locators as any, opts) as Record<string, unknown>;
+            } else {
+              const q = url.searchParams.get("q");
+              if (!q) return send(res, 200, { error: "find needs a query", hint: "insider <url> find component:Card --snap " + snapId });
+              out = snapFind(snap, JSON.parse(q), Number(url.searchParams.get("limit") ?? 10)) as Record<string, unknown>;
+            }
+            out.snap = snap.id;
+            if (snap.tag) out.tag = snap.tag;
+            out.ageMs = Date.now() - snap.takenAt; // staleness is always explicit
+            send(res, 200, out);
+            return;
+          }
           const page = resolvePage(url.searchParams.get("page"));
           if ("error" in page) return send(res, 200, page);
 

@@ -181,9 +181,11 @@ function summarize(el: Element): El {
 }
 
 function serialize(el: Element, opts: ReadOpts, depth: number, parent?: Element, isRoot = false): El | null {
-  if (!opts.hidden && !isVisible(el) && !isRoot) return null;
+  const visible = isVisible(el);
+  if (!opts.hidden && !visible && !isRoot) return null;
 
   const out: El = { ref: refOf(el), kind: el.tagName.toLowerCase() };
+  if (!visible && !isRoot) out.vis = false;
   const t = ownText(el);
   if (t) {
     out.text = t.length > 160 ? t.slice(0, 160) + "…" : t;
@@ -410,12 +412,25 @@ function opOverview(): unknown {
 
 // --- transport: long-poll --------------------------------------------------
 
+// whole-page capture: everything queryable later, in one walk
+function opCapture(): unknown {
+  const root = serialize(
+    document.body,
+    { styles: ["all"], box: true, classes: true, props: true, a11y: true, hidden: true },
+    999,
+    undefined,
+    true,
+  )!;
+  return { root, url: location.href, title: document.title, viewport: { w: window.innerWidth, h: window.innerHeight } };
+}
+
 async function handle(op: string, params: any): Promise<unknown> {
   switch (op) {
     case "read": return opRead(params);
     case "find": return opFind(params);
     case "overview": return opOverview();
-    default: return { error: "unknown op: " + op, hint: "ops: read, find, overview" };
+    case "capture": return opCapture();
+    default: return { error: "unknown op: " + op, hint: "ops: read, find, overview, capture" };
   }
 }
 

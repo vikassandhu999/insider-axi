@@ -9,12 +9,22 @@ type FlagSpec = Record<string, "value" | "bool">;
 const COMMANDS: Record<string, { flags: FlagSpec; help: string }> = {
   status: { flags: {}, help: "insider <url>\n  Live status: connected pages, active page." },
   overview: {
-    flags: { page: "value" },
-    help: "insider <url> overview [--page <id|fragment>]\n  Major regions, landmarks, components — entry points for read.",
+    flags: { page: "value", snap: "value" },
+    help: "insider <url> overview [--page <id|fragment>] [--snap <id>]\n  Major regions, landmarks, components — entry points for read.",
+  },
+  snap: {
+    flags: { page: "value", tag: "value" },
+    help: [
+      "insider <url> snap [--tag name] [--page p]   capture the whole live page as a snapshot",
+      "insider <url> snap ls                        list snapshots (id, tag, url, age)",
+      "insider <url> snap rm <id|tag>               delete a snapshot",
+      "  Query any snapshot with --snap <id|tag> on overview/read/find (tag -> newest match).",
+      "  Snapshot refs never go stale; answers carry snap + ageMs. Snapshots live for the dev-server session.",
+    ].join("\n"),
   },
   read: {
     flags: {
-      styles: "value", depth: "value", wait: "value", page: "value",
+      styles: "value", depth: "value", wait: "value", page: "value", snap: "value",
       hidden: "bool", box: "bool", classes: "bool", props: "bool", a11y: "bool", context: "bool",
     },
     help: [
@@ -26,7 +36,7 @@ const COMMANDS: Record<string, { flags: FlagSpec; help: string }> = {
     ].join("\n"),
   },
   find: {
-    flags: { limit: "value", page: "value" },
+    flags: { limit: "value", page: "value", snap: "value" },
     help: [
       "insider <url> find <query> [--limit n] [--page p]",
       "  Query: bare string = visible text | component:Name | src:path[:line][#Component]",
@@ -79,6 +89,19 @@ async function main() {
 
   if (cmd === "status") endpoint = "status";
   if (flags.page) params.set("page", String(flags.page));
+  if (flags.snap) params.set("snap", String(flags.snap));
+
+  if (cmd === "snap") {
+    if (flags.tag) params.set("tag", String(flags.tag));
+    if (positional[0] === "ls") endpoint = "snaps";
+    else if (positional[0] === "rm") {
+      if (!positional[1]) fail("snap rm needs an id", "insider <url> snap rm s1", 1);
+      endpoint = "snap-rm";
+      params.set("id", positional[1]);
+    } else if (positional.length) {
+      fail("unknown snap action: " + positional[0], "actions: (none) = capture, ls, rm <id>", 1);
+    }
+  }
 
   if (cmd === "read") {
     if (!positional.length) fail("read needs at least one locator", spec.help, 1);

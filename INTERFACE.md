@@ -17,9 +17,19 @@ insider <dev-server-url>                          # no subcommand → status (co
 insider <url> overview   [--page <id|fragment>]
 insider <url> read       <locator...> [--styles s1,s2] [--depth n] [--hidden] [--box] [--classes] [--props] [--a11y] [--context] [--wait "text[:ms]"] [--page p]
 insider <url> find       <query> [--limit n] [--page p]
+insider <url> snap [--tag name]                   # capture whole live page -> snapshot id
+insider <url> snap ls                             # list snapshots (id, tag, url, age)
+insider <url> snap rm <id|tag>                    # delete a snapshot
 ```
 
-Four subcommands. `read` is the single describing operation: a subtree per locator, extras opt-in per flag, surroundings (ancestors, siblings, stacking) via `--context`. `find` disambiguates by query prefix alone — no mode flag.
+`overview`, `read`, and `find` accept `--snap <id|tag>` (tag -> newest match; answers
+always report the resolved id) to run against a snapshot instead of
+the live page. A capture stores everything (hidden elements, boxes, all non-default
+styles, components, src, props, a11y) so any later query is answerable; snapshot refs
+never go stale; every snapshot answer carries `snap` + `ageMs`; `--wait` with `--snap`
+is an error. Snapshots live in dev-server memory, capped at 20.
+
+Five subcommands. `read` is the single describing operation: a subtree per locator, extras opt-in per flag, surroundings (ancestors, siblings, stacking) via `--context`. `find` disambiguates by query prefix alone — no mode flag.
 
 Locator forms (forgiving): `role:button`, `text:"Add to cart"`, `ref:e42`, `point:120,340`, `src:Cart.tsx:42`. A bare string is treated as text. Query forms for `find`: bare string = visible text, `component:Name`, `src:<source-ref>`.
 

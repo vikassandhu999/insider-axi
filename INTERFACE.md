@@ -67,7 +67,7 @@ type Locator =
 type SourceRef = string                     // "path:line[:col]" | "path" | "path#Component" — see Source references
 
 type ReadOpts = {
-  styles?: string[]                         // resolved styles to include; omitted = none beyond defaults
+  styles?: string[]                         // resolved styles to include; "*" patterns expand ("font*"); ["all"] = every computed style (no-effect and parent-duplicate values still omitted); omitted = none
   depth?: number                            // subtree depth limit; 0 = the located element alone
   hidden?: boolean                          // include non-visible elements
   box?: boolean                             // include position/size per element (always on region roots)

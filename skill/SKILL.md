@@ -1,110 +1,76 @@
 ---
 name: insider
-description: Read the ground truth of a rendered UI (resolved styles, geometry, component + source mapping) as compact JSON via the insider CLI. Use when styling, debugging layout, or verifying a UI change in a Vite app running in dev — instead of guessing values from screenshots or source.
+description: Read the ground truth of a rendered UI (resolved styles, geometry, component + source mapping) as compact JSON via the insider CLI. Use when styling, debugging layout, porting UI between codebases, or verifying a UI change in a Vite app running in dev — instead of guessing values from screenshots or source.
+user-invocable: true
 ---
 
-# Insider — UI inspection for agents
+# insider
 
-Read-only. Never clicks, types, or mutates the page. Dev only. The first
-parameter is always the dev server URL.
+Agent ergonomic interface for reading a rendered UI. Read-only: it never clicks,
+types, or mutates the page. Dev only. The first parameter is always the dev
+server URL. Requires the `insider()` plugin in the app's vite config.
 
 ## When to use
 
-* You need exact rendered values: spacing, sizes, colors, typography.
-* You need to map something visible to the component and source file behind it.
-* You need to verify a UI edit landed (read before, edit, read after, compare).
+Use insider whenever a task needs exact rendered values — spacing, sizes, colors,
+typography — or a mapping from something visible to the component and source line
+behind it, or a before/after verification of a UI edit.
 
-## Getting connected — decision tree
+Skip it when the source alone answers the question, or when you need to *drive*
+the page (clicking, typing) — driving belongs to a browser tool or the user.
 
-Work down each tree; stop at the first branch that holds.
+## Workflow
 
-**1. Base URL of the app**
-
-```
-User gave a URL?                          -> use it
-App is in the current project?            -> find the port yourself:
-    dev server already running            -> read its log line ("Local: http://localhost:NNNN")
-    vite.config has server.port           -> http://localhost:<port>
-    package.json dev script has --port    -> http://localhost:<port>
-    none of the above                     -> default http://localhost:5173, verify with `insider <url>`
-Neither?                                  -> ask the user for the URL
-```
-
-Verify whichever you picked: `insider <url>` must answer JSON. Connection refused ->
-the dev server isn't running (start it if it's this project; otherwise ask the user).
-
-**2. Status shows 0 pages connected**
-
-```
-Just need the page rendered (read/snap)?  -> open it yourself: `open <url>` (macOS)
-                                             / `xdg-open <url>` (Linux), then re-check status
-That failed or no display available?      -> ask the user to open <url> in their browser
-```
-
-**3. The page needs interaction first (login, navigate to a route, open a modal)**
-
-```
-Reachable by URL alone (a route)?         -> open the deep URL directly, no interaction needed
-User is around?                           -> ask them to click through to the state, then `snap`
-User approves automation?                 -> use available browser-control tools (e.g. a
-                                             chrome CLI/MCP) to drive the page there yourself —
-                                             ask once before taking over their browser
-Neither?                                  -> report what state you need and stop; never guess
-                                             facts about a state you couldn't reach
-```
-
-Insider itself never interacts — it only reads. Driving the page is always a separate
-tool or the user's hands. Once the page is in the right state, `snap --tag <state>`
-freezes it so you can query without racing further changes.
+1. Resolve the base URL: user gave one → use it; app is in this project → read the
+   dev-server log ("Local: http://localhost:NNNN"), else `server.port` in
+   vite.config, else `--port` in the dev script, else try 5173; otherwise ask.
+   Verify with `insider <url>` — it must answer JSON.
+2. If status shows 0 pages: open the page yourself (`open <url>` / `xdg-open <url>`);
+   if that fails, ask the user to open it in their browser.
+3. If the page needs interaction to reach a state (login, modal): a route URL →
+   open it directly; else ask the user to click through; else, with the user's
+   explicit approval, drive it with an available browser tool. Never guess facts
+   about a state you couldn't reach.
+4. Once the page is right, `snap --tag <state>` to freeze it, then query with
+   `--snap <tag>` — snapshot refs never go stale.
+5. `overview` gives entry-point refs; `read` is the main op. Pass any `ref` or
+   `src` from an answer straight back as a target.
+6. After editing code, re-read the same locator live to verify the change landed.
+   Refs die on reload — re-locate by `src:`/`find`, or query the snapshot.
 
 ## Commands
 
 ```
-insider http://localhost:5173                    # status: connected pages
-insider <url> overview [--page p]                # regions, landmarks, components
-insider <url> read <locator...> [flags]          # subtree per locator (the main op)
-insider <url> find <query> [--limit n]           # search elements
+commands[7]:
+  <url>                                      status: connected pages, active page
+  <url> overview [--page p] [--snap s]       regions, landmarks, components
+  <url> read <locator...> [flags]            subtree per locator (the main op)
+  <url> find <query> [--limit n] [--snap s]  search elements
+  <url> snap [--tag name]                    capture whole live page as a snapshot
+  <url> snap ls                              list snapshots (id, tag, url, age)
+  <url> snap rm <id|tag>                     delete a snapshot
+
+locators:  role:button | text:"Add to cart" | ref:e42 | point:120,340 |
+           src:Cart.tsx:42 | bare string = text
+queries:   bare string = visible text | component:Name | src:path[:line][#Component]
+read flags: --styles margin,padding | --styles "font*" | --styles all | --depth n |
+           --box | --classes | --props | --a11y | --context | --hidden |
+           --wait "text[:ms]" | --page p | --snap <id|tag>
 ```
 
-Locators: `role:button` | `text:"Add to cart"` | `ref:e42` | `point:120,340` |
-`src:Cart.tsx:42` | bare string = text.
-Find queries: bare string = visible text | `component:Name` | `src:path[:line][#Component]`.
+Every subcommand supports `--help`.
 
-Read flags: `--styles margin,padding,gap` (only these are returned; `*` patterns
-work: `--styles "font*,border*"`; `--styles all` = every computed style when you
-don't know what to ask for — prefer named lists or patterns once you do, all is
-expensive),
-`--depth n` (0 = the element alone), `--box` (geometry), `--classes`,
-`--props` (component inputs), `--a11y`, `--context` (ancestors/siblings/stack),
-`--hidden`, `--wait "text[:ms]"` (readiness), `--page p`.
+## Tips
 
-## Snapshots
-
-```
-insider <url> snap --tag before-fix       # capture whole page -> {"snap":"s1","tag":"before-fix",...}
-insider <url> snap ls | snap rm before-fix
-insider <url> read ref:e6 --styles padding --snap before-fix   # query the frozen state (id or tag)
-```
-
-Use a snapshot when you need a stable "before" (capture, edit code, compare
-against a fresh live read) or when refs must survive reloads. Snapshot answers
-carry `snap` + `ageMs` — the facts are from capture time, not now. Never act on
-an old snapshot when the live page has since changed; re-read live to verify.
-
-## Workflow
-
-1. `insider <url>` — confirm a page is connected.
-2. `insider <url> overview` — get entry-point refs.
-3. `insider <url> read ref:e7 --styles display,gap,padding --box` — exact facts.
-4. Any `ref` or `src` in an answer can be passed straight back as a target.
-5. After editing code, re-run the same read to verify the change.
-
-## Reading answers
-
-Compact JSON; absent key = fact absent or not asked for, never null. Children
-only appear on `read`. `collapsed: n` = n structural wrappers omitted. Styles on
-a child are only where they differ from the parent (root states the baseline).
-Every answer has a `next` field suggesting a follow-up command. Errors are
-`{error, hint}` with exit code 1 — the hint says what to do next.
-
-Pipe through `jq` to filter: `insider <url> read role:main --styles gap | jq '.regions[0].root.children[].styles'`.
+* Output is compact JSON: absent key = fact absent or not asked for, never null.
+  Pipe through `jq` to filter: `... read role:main --styles gap | jq '.regions[0].root.styles'`.
+* Child styles show only diffs from the parent (root states the baseline);
+  `collapsed: n` = n structural wrappers omitted; `vis: false` = hidden element.
+* Prefer named style lists or patterns (`"font*,border*"`) over `--styles all` —
+  all is ~5KB per element.
+* Snapshot answers carry `snap` + `ageMs`: facts from capture time, not now.
+  Re-read live before acting if the page has changed since.
+* Source paths are reliable on React 18 and 19; line numbers can drift a few
+  lines on React 19 setups without sourcemaps.
+* Errors are `{error, hint}` with exit code 1 — the hint is the next command to run.
+  Every success answer has a `next` field suggesting a follow-up.

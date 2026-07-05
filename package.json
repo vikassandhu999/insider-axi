@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "UI inspector for agents: Vite plugin + AXI CLI giving ground truth of a rendered UI as compact JSON",
   "type": "module",
+  "license": "MIT",
+  "author": "Vikas Sandhu",
+  "keywords": ["vite-plugin", "agent", "axi", "ui-inspector", "devtools", "react", "claude", "mcp-alternative"],
   "bin": {
     "insider": "dist/cli.js"
   },
@@ -15,6 +18,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm test",
     "test": "npm run build && node --test test/*.test.js",
     "demo": "vite demo"
   },

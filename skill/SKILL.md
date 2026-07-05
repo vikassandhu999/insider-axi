@@ -14,6 +14,49 @@ parameter is always the dev server URL.
 * You need to map something visible to the component and source file behind it.
 * You need to verify a UI edit landed (read before, edit, read after, compare).
 
+## Getting connected — decision tree
+
+Work down each tree; stop at the first branch that holds.
+
+**1. Base URL of the app**
+
+```
+User gave a URL?                          -> use it
+App is in the current project?            -> find the port yourself:
+    dev server already running            -> read its log line ("Local: http://localhost:NNNN")
+    vite.config has server.port           -> http://localhost:<port>
+    package.json dev script has --port    -> http://localhost:<port>
+    none of the above                     -> default http://localhost:5173, verify with `insider <url>`
+Neither?                                  -> ask the user for the URL
+```
+
+Verify whichever you picked: `insider <url>` must answer JSON. Connection refused ->
+the dev server isn't running (start it if it's this project; otherwise ask the user).
+
+**2. Status shows 0 pages connected**
+
+```
+Just need the page rendered (read/snap)?  -> open it yourself: `open <url>` (macOS)
+                                             / `xdg-open <url>` (Linux), then re-check status
+That failed or no display available?      -> ask the user to open <url> in their browser
+```
+
+**3. The page needs interaction first (login, navigate to a route, open a modal)**
+
+```
+Reachable by URL alone (a route)?         -> open the deep URL directly, no interaction needed
+User is around?                           -> ask them to click through to the state, then `snap`
+User approves automation?                 -> use available browser-control tools (e.g. a
+                                             chrome CLI/MCP) to drive the page there yourself —
+                                             ask once before taking over their browser
+Neither?                                  -> report what state you need and stop; never guess
+                                             facts about a state you couldn't reach
+```
+
+Insider itself never interacts — it only reads. Driving the page is always a separate
+tool or the user's hands. Once the page is in the right state, `snap --tag <state>`
+freezes it so you can query without racing further changes.
+
 ## Commands
 
 ```

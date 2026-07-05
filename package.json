@@ -5,7 +5,19 @@
   "type": "module",
   "license": "MIT",
   "author": "Vikas Sandhu",
-  "keywords": ["vite-plugin", "agent", "axi", "ui-inspector", "devtools", "react", "claude", "mcp-alternative"],
+  "repository": {
+    "url": "git+https://github.com/vikassandhu999/insider-axi.git"
+  },
+  "keywords": [
+    "vite-plugin",
+    "agent",
+    "axi",
+    "ui-inspector",
+    "devtools",
+    "react",
+    "claude",
+    "mcp-alternative"
+  ],
   "bin": {
     "insider": "dist/cli.js"
   },

@@ -20,7 +20,17 @@ insider <url> find       <query> [--limit n] [--page p]
 insider <url> snap [--tag name]                   # capture whole live page -> snapshot id
 insider <url> snap ls                             # list snapshots (id, tag, url, age)
 insider <url> snap rm <id|tag>                    # delete a snapshot
+insider <url> notes [--page p] [--snap s]         # list annotations (user feedback on elements)
+insider <url> notes done <id> [--note "how"]      # resolve a note (pin turns green in browser)
+insider <url> notes rm <id> | notes clear
 ```
+
+Annotations: in the browser, Alt+A toggles annotate mode — click an element (or
+shift-click several, then Enter) and type. Each note stores per-element anchors
+(component, source, text, box) plus the text; notes persist in `.insider/annotations.json`
+and re-anchor across reloads (src -> text -> component; failures marked orphaned).
+Annotated elements carry `note: "<id>: <text>"` in read/find answers; snapshots
+embed the page's notes at capture time.
 
 `overview`, `read`, and `find` accept `--snap <id|tag>` (tag -> newest match; answers
 always report the resolved id) to run against a snapshot instead of

@@ -177,6 +177,8 @@ function summarize(el: Element): El {
   const ci = componentInfo(el);
   if (ci.component) out.component = ci.component;
   if (ci.src) out.src = ci.src;
+  const nt = noteFor(el);
+  if (nt) out.note = nt;
   return out;
 }
 
@@ -206,6 +208,8 @@ function serialize(el: Element, opts: ReadOpts, depth: number, parent?: Element,
     const a = a11y(el);
     if (a) out.a11y = a;
   }
+  const nt = noteFor(el);
+  if (nt) out.note = nt;
 
   if (depth <= 0) return out;
 
@@ -255,7 +259,7 @@ function locate(loc: Locator): Element | { error: string; hint: string } {
     return el ?? { error: "not there: " + loc.ref, hint: "ref may be stale after an edit; re-run find or overview" };
   }
   if ("point" in loc) {
-    const el = document.elementFromPoint(loc.point[0], loc.point[1]);
+    const el = document.elementsFromPoint(loc.point[0], loc.point[1]).find((e) => !isOverlay(e));
     return el ?? { error: "nothing at " + loc.point.join(","), hint: "point is outside the viewport" };
   }
   if ("text" in loc) {
@@ -347,7 +351,7 @@ function contextOf(el: Element): El {
   const r = el.getBoundingClientRect();
   const stack = document
     .elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2)
-    .filter((s) => s !== el)
+    .filter((s) => s !== el && !isOverlay(s))
     .map(summarize);
   return { ancestors, siblings, stack };
 }
@@ -412,7 +416,7 @@ function opOverview(): unknown {
 
 // --- transport: long-poll --------------------------------------------------
 
-// whole-page capture: everything queryable later, in one walk
+// whole-page capture: everything queryable later, in one walk; embeds the page's notes
 function opCapture(): unknown {
   const root = serialize(
     document.body,
@@ -421,7 +425,11 @@ function opCapture(): unknown {
     undefined,
     true,
   )!;
-  return { root, url: location.href, title: document.title, viewport: { w: window.innerWidth, h: window.innerHeight } };
+  return {
+    root, url: location.href, title: document.title,
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+    notes: notesCache.filter((n) => n.page === location.pathname),
+  };
 }
 
 async function handle(op: string, params: any): Promise<unknown> {
@@ -473,3 +481,235 @@ async function loop() {
 }
 
 loop();
+
+// --- annotations: overlay UI + note stamping ---------------------------------
+// Lives on documentElement (outside body) in shadow DOM: body walks never see it,
+// app styles never touch it. The app itself stays unmutated.
+
+type NoteAnchor = { ref?: string; component?: string; src?: string; text?: string; box?: any; orphaned?: boolean };
+type Note = { id: string; text: string; state: string; page: string; elements: NoteAnchor[] };
+
+let notesCache: Note[] = [];
+const noteEls = new Map<Element, Note>();
+
+function isOverlay(e: Element): boolean {
+  return e.tagName === "INSIDER-NOTES";
+}
+
+function noteFor(el: Element): string | undefined {
+  const n = noteEls.get(el);
+  return n && n.state === "open" ? n.id + ": " + n.text : undefined;
+}
+
+function anchorOf(el: Element): NoteAnchor {
+  const ci = componentInfo(el);
+  const a: NoteAnchor = { ref: refOf(el), box: box(el) };
+  if (ci.component) a.component = ci.component;
+  if (ci.src) a.src = ci.src;
+  const t = ownText(el);
+  if (t) a.text = t.slice(0, 80);
+  return a;
+}
+
+// re-anchor stored notes to current DOM: src -> text -> component, else orphaned
+function reanchor() {
+  noteEls.clear();
+  for (const n of notesCache) {
+    if (n.page !== location.pathname) continue;
+    for (const a of n.elements) {
+      let el: Element | undefined;
+      if (a.src) {
+        // stored src lines are server-remapped, live ones aren't — match by path, refine by text
+        const p = pathOfSrc(a.src);
+        const cands = all().filter((e) => {
+          const s = componentInfo(e).src;
+          return s ? pathOfSrc(s).endsWith(p) || p.endsWith(pathOfSrc(s)) : false;
+        });
+        el = cands.find((e) => a.text && ownText(e).slice(0, 80) === a.text) ?? cands[0];
+      }
+      if (!el && a.text) el = all().find((e) => ownText(e).slice(0, 80) === a.text);
+      if (!el && a.component) el = all().find((e) => componentInfo(e).component === a.component);
+      a.orphaned = !el;
+      if (el) noteEls.set(el, n);
+    }
+  }
+  renderPins();
+}
+
+function pathOfSrc(s: string): string {
+  return s.replace(/(:\d+){1,2}$/, "").replace(/\\/g, "/").toLowerCase().replace(/^\//, "");
+}
+
+async function refreshNotes() {
+  try {
+    const res = await fetch(BASE + "/notes?full&page=" + encodeURIComponent(location.pathname));
+    const data = await res.json();
+    notesCache = data.notes ?? [];
+    reanchor();
+  } catch { /* server briefly down (restart) — next tick retries */ }
+}
+
+// --- overlay dom -------------------------------------------------------------
+
+let mode = false;
+const selection = new Set<Element>();
+
+const host = document.createElement("insider-notes");
+const shadow = host.attachShadow({ mode: "open" });
+shadow.innerHTML = `<style>
+  :host { all: initial; }
+  * { box-sizing: border-box; font: 12px/1.4 system-ui, sans-serif; }
+  #hl { position: fixed; border: 2px solid #6366f1; background: rgba(99,102,241,.08); pointer-events: none; display: none; z-index: 2147483645; }
+  #chip { position: fixed; background: #1e1b4b; color: #e0e7ff; padding: 2px 8px; border-radius: 4px; pointer-events: none; display: none; z-index: 2147483646; white-space: nowrap; }
+  .pin { position: fixed; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: #6366f1; color: #fff; text-align: center; line-height: 18px; font-weight: 600; cursor: pointer; z-index: 2147483646; }
+  .pin.done { background: #16a34a; }
+  .sel { position: fixed; border: 2px dashed #f59e0b; pointer-events: none; z-index: 2147483645; }
+  #pop { position: fixed; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 8px; display: none; z-index: 2147483647; width: 260px; }
+  #pop textarea { width: 100%; height: 54px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; resize: none; }
+  #pop .row { display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end; align-items: center; }
+  #pop button { border: 0; border-radius: 4px; padding: 4px 10px; cursor: pointer; background: #6366f1; color: #fff; }
+  #pop button.ghost { background: #eee; color: #333; }
+  #badge { position: fixed; right: 12px; bottom: 12px; background: #1e1b4b; color: #e0e7ff; padding: 4px 10px; border-radius: 12px; cursor: pointer; z-index: 2147483646; display: none; }
+  #selchip { position: fixed; background: #f59e0b; color: #1e1b4b; padding: 3px 10px; border-radius: 12px; cursor: pointer; font-weight: 600; display: none; z-index: 2147483647; }
+</style>
+<div id="hl"></div><div id="chip"></div><div id="pins"></div><div id="sels"></div>
+<div id="pop"><textarea placeholder="What should change here?"></textarea>
+  <div class="row"><span id="popmeta" style="margin-right:auto;color:#64748b"></span>
+  <button class="ghost" id="cancel">Esc</button><button id="save">Save</button></div></div>
+<div id="selchip"></div><div id="badge"></div>`;
+document.documentElement.appendChild(host);
+
+const $ = (id: string) => shadow.getElementById(id) as HTMLElement;
+const ta = shadow.querySelector("textarea") as HTMLTextAreaElement;
+let popTargets: Element[] = [];
+let editNote: Note | null = null;
+
+function setMode(on: boolean) {
+  mode = on;
+  document.documentElement.style.cursor = on ? "crosshair" : "";
+  if (!on) { $("hl").style.display = "none"; $("chip").style.display = "none"; hidePop(); selection.clear(); renderSel(); }
+  renderPins();
+}
+
+function renderPins() {
+  const box = $("pins");
+  box.innerHTML = "";
+  $("badge").style.display = "none";
+  const open = notesCache.filter((n) => n.page === location.pathname && n.state === "open");
+  if (!mode) {
+    if (open.length) { $("badge").textContent = open.length + (open.length === 1 ? " note" : " notes"); $("badge").style.display = "block"; }
+    return;
+  }
+  for (const [el, n] of noteEls) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0) continue;
+    const pin = document.createElement("div");
+    pin.className = "pin" + (n.state === "done" ? " done" : "");
+    pin.textContent = n.id.slice(1);
+    pin.style.left = Math.max(0, r.right - 9) + "px";
+    pin.style.top = Math.max(0, r.top - 9) + "px";
+    pin.onclick = (ev) => { ev.stopPropagation(); openPop([el], n); };
+    box.appendChild(pin);
+  }
+}
+
+function renderSel() {
+  const box = $("sels");
+  box.innerHTML = "";
+  for (const el of selection) {
+    const r = el.getBoundingClientRect();
+    const d = document.createElement("div");
+    d.className = "sel";
+    d.style.left = r.left + "px"; d.style.top = r.top + "px";
+    d.style.width = r.width + "px"; d.style.height = r.height + "px";
+    box.appendChild(d);
+  }
+  const chip = $("selchip");
+  if (selection.size) {
+    chip.textContent = selection.size + " selected — add note (Enter)";
+    chip.style.display = "block";
+    const first = [...selection][0].getBoundingClientRect();
+    chip.style.left = first.left + "px";
+    chip.style.top = Math.max(4, first.top - 28) + "px";
+    chip.onclick = () => openPop([...selection], null);
+  } else chip.style.display = "none";
+}
+
+function openPop(targets: Element[], note: Note | null) {
+  popTargets = targets;
+  editNote = note;
+  ta.value = note ? note.text : "";
+  const r = targets[0].getBoundingClientRect();
+  const pop = $("pop");
+  pop.style.display = "block";
+  pop.style.left = Math.min(window.innerWidth - 280, Math.max(4, r.left)) + "px";
+  pop.style.top = Math.min(window.innerHeight - 130, r.bottom + 6) + "px";
+  const ci = componentInfo(targets[0]);
+  $("popmeta").textContent = targets.length > 1 ? targets.length + " elements" : (ci.component ?? targets[0].tagName.toLowerCase());
+  ta.focus();
+}
+
+function hidePop() { $("pop").style.display = "none"; popTargets = []; editNote = null; }
+
+async function saveNote() {
+  const text = ta.value.trim();
+  if (!text) return hidePop();
+  const body = editNote
+    ? { id: editNote.id, text }
+    : { text, page: location.pathname, elements: popTargets.map(anchorOf) };
+  await fetch(BASE + "/note", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  hidePop(); selection.clear(); renderSel();
+  refreshNotes();
+}
+
+$("save").onclick = saveNote;
+$("cancel").onclick = hidePop;
+$("badge").onclick = () => setMode(true);
+ta.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveNote(); }
+  if (e.key === "Escape") hidePop();
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.altKey && e.code === "KeyA") { e.preventDefault(); setMode(!mode); }
+  if (e.key === "Escape" && mode && !popTargets.length) setMode(false);
+  if (e.key === "Enter" && mode && selection.size && !popTargets.length) openPop([...selection], null);
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!mode || popTargets.length) return;
+  const el = document.elementsFromPoint(e.clientX, e.clientY).find((x) => !isOverlay(x));
+  if (!el || el === document.body || el === document.documentElement) { $("hl").style.display = "none"; $("chip").style.display = "none"; return; }
+  const r = el.getBoundingClientRect();
+  const hl = $("hl");
+  hl.style.display = "block";
+  hl.style.left = r.left + "px"; hl.style.top = r.top + "px";
+  hl.style.width = r.width + "px"; hl.style.height = r.height + "px";
+  const ci = componentInfo(el);
+  const chip = $("chip");
+  chip.textContent = (ci.component ? ci.component + " · " : "") + el.tagName.toLowerCase() + (ci.src ? " · " + ci.src.split("/").pop() : "");
+  chip.style.display = "block";
+  chip.style.left = r.left + "px";
+  chip.style.top = Math.max(4, r.top - 24) + "px";
+}, true);
+
+window.addEventListener("click", (e) => {
+  if (!mode) return;
+  if (e.composedPath().includes(host)) return; // clicks on our own UI pass through
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const el = document.elementsFromPoint(e.clientX, e.clientY).find((x) => !isOverlay(x));
+  if (!el || el === document.body) return;
+  if (e.shiftKey) {
+    selection.has(el) ? selection.delete(el) : selection.add(el);
+    renderSel();
+  } else if (!popTargets.length) {
+    openPop([el], noteEls.get(el) && noteEls.get(el)!.state === "open" ? noteEls.get(el)! : null);
+  }
+}, true);
+
+window.addEventListener("scroll", () => { if (mode) { renderPins(); renderSel(); } }, true);
+window.addEventListener("resize", () => { if (mode) { renderPins(); renderSel(); } });
+
+refreshNotes();
+setInterval(refreshNotes, 5000); // ponytail: 5s poll for note state; push via long-poll channel if it ever matters

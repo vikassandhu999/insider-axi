@@ -22,6 +22,17 @@ const COMMANDS: Record<string, { flags: FlagSpec; help: string }> = {
       "  Snapshot refs never go stale; answers carry snap + ageMs. Snapshots live for the dev-server session.",
     ].join("\n"),
   },
+  notes: {
+    flags: { page: "value", snap: "value", note: "value", all: "bool" },
+    help: [
+      "insider <url> notes [--all] [--page p] [--snap s]   list open annotations (--all includes done)",
+      "insider <url> notes <id>                            one note, full detail (all elements + anchors)",
+      "insider <url> notes done <id> [--note \"how it was resolved\"]",
+      "insider <url> notes rm <id> | notes clear",
+      "  Users annotate in the browser (Alt+A, click element, type). Each note carries the",
+      "  element's component, source line, and box. Annotated elements show note: in read/find.",
+    ].join("\n"),
+  },
   read: {
     flags: {
       styles: "value", depth: "value", wait: "value", page: "value", snap: "value",
@@ -90,6 +101,24 @@ async function main() {
   if (cmd === "status") endpoint = "status";
   if (flags.page) params.set("page", String(flags.page));
   if (flags.snap) params.set("snap", String(flags.snap));
+
+  if (cmd === "notes") {
+    if (positional[0] === "done") {
+      if (!positional[1]) fail("notes done needs an id", "insider <url> notes done n1", 1);
+      endpoint = "notes-done";
+      params.set("id", positional[1]);
+      if (flags.note) params.set("note", String(flags.note));
+    } else if (positional[0] === "rm") {
+      if (!positional[1]) fail("notes rm needs an id", "insider <url> notes rm n1", 1);
+      endpoint = "notes-rm";
+      params.set("id", positional[1]);
+    } else if (positional[0] === "clear") {
+      endpoint = "notes-clear";
+    } else if (positional[0]) {
+      params.set("id", positional[0]); // notes <id> = detail
+    }
+    if (flags.all) params.set("all", "1");
+  }
 
   if (cmd === "snap") {
     if (flags.tag) params.set("tag", String(flags.tag));

@@ -8,9 +8,10 @@ import type { Plugin, ViteDevServer } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { snapRead, snapFind, snapOverview, type Snapshot } from "./snapquery.js";
 import { parseLocator } from "./shared.js";
+import { NoteStore, type NoteAnchor } from "./notes.js";
 
 const BASE = "/__insider";
-const STALE_MS = 15_000;
+const STALE_MS = 35_000; // must exceed the 25s parked-poll hold, else idle pages flap stale
 const MAX_SNAPS = 20;
 
 type Page = { id: string; url: string; title: string; viewport: unknown; lastSeen: number };
@@ -147,6 +148,7 @@ export default function insider(): Plugin {
 
     configureServer(server: ViteDevServer) {
       root = server.config.root;
+      const noteStore = new NoteStore(join(root, ".insider", "annotations.json"));
 
       server.httpServer?.once("listening", () => {
         const addr = server.httpServer?.address();
@@ -200,6 +202,66 @@ export default function insider(): Plugin {
           return;
         }
 
+        if (path === "/note" && req.method === "POST") {
+          const b = (await body(req)) as { id?: string; text: string; page?: string; elements?: NoteAnchor[] };
+          const note = b.id
+            ? noteStore.update(b.id, b.text)
+            : noteStore.create(b.text, (relativizeSrc(b.elements ?? [], server) as NoteAnchor[]), b.page ?? "/");
+          send(res, 200, note ?? { error: "unknown note: " + b.id, hint: "insider <url> notes" });
+          return;
+        }
+        if (path === "/notes") {
+          const page = url.searchParams.get("page") ?? undefined;
+          const snapId = url.searchParams.get("snap");
+          if (snapId) {
+            const snap = snaps.get(snapId) ?? [...snaps.values()].filter((s) => s.tag === snapId).sort((a, b) => b.takenAt - a.takenAt)[0];
+            if (!snap) return send(res, 200, { error: "unknown snapshot: " + snapId, hint: "insider <url> snap ls" });
+            return send(res, 200, { notes: snap.notes ?? [], snap: snap.id, ageMs: Date.now() - snap.takenAt });
+          }
+          const all = noteStore.list(page);
+          if (url.searchParams.has("full")) return send(res, 200, { notes: all }); // client re-anchoring needs raw anchors
+          const id = url.searchParams.get("id");
+          if (id) {
+            const n = all.find((x) => x.id === id);
+            if (!n) return send(res, 200, { error: "unknown note: " + id, hint: "insider <url> notes", exists: all.map((x) => x.id) });
+            const src = n.elements[0]?.src;
+            return send(res, 200, { ...n, next: src ? `insider <url> read src:${src} --box` : "insider <url> notes" });
+          }
+          const open = all.filter((n) => n.state === "open");
+          const shown = url.searchParams.has("all") ? all : open;
+          const rows = shown.map((n) => {
+            const r: Record<string, unknown> = { id: n.id, text: n.text.length > 80 ? n.text.slice(0, 80) + "…" : n.text };
+            if (n.elements.length > 1) r.els = n.elements.length;
+            if (n.elements[0]?.src) r.src = n.elements[0].src;
+            if (n.elements[0]?.component) r.component = n.elements[0].component;
+            if (url.searchParams.has("all")) r.state = n.state;
+            r.ageMs = Date.now() - n.createdAt;
+            return r;
+          });
+          send(res, 200, {
+            total: all.length, open: open.length, notes: rows,
+            next: open.length ? "insider <url> notes " + open[0].id
+              : all.length ? "insider <url> notes clear"
+              : "annotate in the browser: Alt+A, click an element, type",
+          });
+          return;
+        }
+        if (path === "/notes-done") {
+          const id = url.searchParams.get("id") ?? "";
+          const n = noteStore.done(id, url.searchParams.get("note") ?? undefined);
+          send(res, 200, n ? { done: id } : { error: "unknown note: " + id, hint: "insider <url> notes", exists: noteStore.list().map((x) => x.id) });
+          return;
+        }
+        if (path === "/notes-rm") {
+          const id = url.searchParams.get("id") ?? "";
+          send(res, 200, noteStore.rm(id) ? { removed: id } : { error: "unknown note: " + id, hint: "insider <url> notes", exists: noteStore.list().map((x) => x.id) });
+          return;
+        }
+        if (path === "/notes-clear") {
+          send(res, 200, { cleared: noteStore.clear() });
+          return;
+        }
+
         if (path === "/snap" && !url.searchParams.has("rm") && !url.searchParams.has("ls")) {
           if (snaps.size >= MAX_SNAPS)
             return send(res, 200, { error: "snapshot limit (" + MAX_SNAPS + ") reached", hint: "insider <url> snap rm <id>" });
@@ -212,6 +274,7 @@ export default function insider(): Plugin {
           const snap: Snapshot = {
             id, tag, page: page.id, url: data.url, title: data.title, viewport: data.viewport,
             takenAt: Date.now(), root: relativizeSrc(data.root, server) as Snapshot["root"],
+            notes: data.notes ?? [],
           };
           snaps.set(id, snap);
           const count = JSON.stringify(snap.root).length;

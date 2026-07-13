@@ -4,7 +4,7 @@
 import { parseSourceRef, sourceRefMatches, type Locator, type Query } from "./shared.js";
 
 export type SnapNode = {
-  ref: string; kind: string; text?: string; component?: string; src?: string;
+  ref: string; kind: string; text?: string; component?: string; src?: string; note?: string;
   box?: { x: number; y: number; w: number; h: number };
   styles?: Record<string, string>; classes?: string[]; props?: unknown;
   a11y?: { role?: string; name?: string; states?: string[] };
@@ -14,6 +14,7 @@ export type SnapNode = {
 export type Snapshot = {
   id: string; tag?: string; page: string; url: string; title: string;
   viewport: { w: number; h: number }; takenAt: number; root: SnapNode;
+  notes?: unknown[];                  // page's annotations at capture time
 };
 
 type Index = { byRef: Map<string, SnapNode>; parent: Map<SnapNode, SnapNode>; all: SnapNode[] };
@@ -80,6 +81,7 @@ function summarize(n: SnapNode): SnapNode {
   if (n.text) out.text = n.text.length > 80 ? n.text.slice(0, 80) + "…" : n.text;
   if (n.component) out.component = n.component;
   if (n.src) out.src = n.src;
+  if (n.note) out.note = n.note;
   return out;
 }
 
@@ -128,6 +130,7 @@ function project(n: SnapNode, opts: ReadOpts, depth: number, idx: Index, parent?
   if (n.text) out.text = n.text;
   if (n.component) out.component = n.component;
   if (n.src) out.src = n.src;
+  if (n.note) out.note = n.note;
   if (n.vis === false) out.vis = false;
   if ((opts.box || isRoot) && n.box) out.box = n.box;
   if (opts.styles?.length) {

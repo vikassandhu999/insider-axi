@@ -1,6 +1,6 @@
 {
   "name": "insider-axi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "UI inspector for agents: Vite plugin + AXI CLI giving ground truth of a rendered UI as compact JSON",
   "type": "module",
   "license": "MIT",

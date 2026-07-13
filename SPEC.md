@@ -11,7 +11,7 @@ Gives a coding agent the ground truth of a rendered UI as structured text, cheap
 
 ## Protocol: AXI (https://axi.md)
 
-* Agents interact through a CLI with subcommands, one per operation (status, overview, read, find, snap).
+* Agents interact through a CLI with subcommands, one per operation (status, overview, read, find, snap, notes).
 * The dev server's URL is always the first parameter: `insider <dev-server-url> <subcommand> [flags]` — that is what the CLI connects to.
 * Output is compact JSON: short keys, absent facts omitted (never null), minimal default fields per item.
 * Responses include pre-computed aggregates (counts, totals) so no follow-up call is needed to summarize.
@@ -43,6 +43,15 @@ Gives a coding agent the ground truth of a rendered UI as structured text, cheap
 * Staleness is always explicit: every snapshot answer names the snapshot and its age. Readiness conditions are rejected on snapshots — there is nothing to wait for.
 * The live page remains the default target; snapshots are only consulted when explicitly named.
 
+## Annotations
+
+* A user can pin free-text feedback to elements directly on the rendered page (a keyboard-toggled annotate mode: click one element, or shift-click several, and type). One note can cover multiple elements.
+* Every note carries each element's identity — component, source location, geometry, text — so feedback arrives pre-resolved to code, and it appears on the elements themselves in read/find answers.
+* The agent can list notes, mark them done (optionally saying how), and remove them; resolution is visible on the page (pins turn green) so the user watches feedback get addressed.
+* Notes survive reloads (re-anchored by source, then text, then component; failures marked orphaned, never dropped silently) and dev-server restarts (persisted in the project under `.insider/`).
+* Snapshots embed the page's notes at capture time.
+* The annotation overlay is injected by the tool, isolated from the app (shadow DOM, outside the body), excluded from every answer, and changes nothing about the app itself.
+
 ## Response economy
 
 * Facts once: no value repeated between element and reference, no inherited style repeated on a matching child (the root states the baseline), no default/no-effect values emitted.
@@ -64,7 +73,7 @@ Gives a coding agent the ground truth of a rendered UI as structured text, cheap
 
 ## Safety and scope
 
-* Read-only: never clicks, types, navigates, scrolls, or mutates. Its presence changes nothing an app, user, or test would notice.
+* Read-only: never clicks, types, navigates, scrolls, or mutates the app. Its presence changes nothing about how the app behaves, renders, or performs; the only visible additions are the tool's own annotation pins and badge, which live outside the app's DOM and appear in no answer.
 * Component inputs are bounded in size and depth; secret-like names redacted; no absolute paths ever.
 * It answers with numbers and structure; aesthetics judgments and transient interaction states are out of scope.
 

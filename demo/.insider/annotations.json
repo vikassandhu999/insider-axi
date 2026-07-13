@@ -1,0 +1,64 @@
+{
+ "next": 4,
+ "notes": [
+  {
+   "id": "n1",
+   "text": "price should be green like success",
+   "state": "done",
+   "page": "/",
+   "elements": [
+    {
+     "ref": "e4",
+     "component": "PriceTag",
+     "src": "App.jsx:2:10",
+     "text": "$129",
+     "box": {
+      "x": 907,
+      "y": 153,
+      "w": 36,
+      "h": 18
+     }
+    }
+   ],
+   "createdAt": 1783969885972,
+   "resolvedAt": 1783969901679,
+   "resolution": "made it green"
+  },
+  {
+   "id": "n2",
+   "text": "make this bold",
+   "state": "done",
+   "page": "/",
+   "elements": [
+    {
+     "component": "Card",
+     "src": "App.jsx:8:7",
+     "text": "Grinder"
+    }
+   ],
+   "createdAt": 1783969966675,
+   "resolvedAt": 1783970436573
+  },
+  {
+   "id": "n3",
+   "text": "kettle card looks too plain, add subtle shadow",
+   "state": "open",
+   "page": "/",
+   "elements": [
+    {
+     "ref": "e1",
+     "box": {
+      "x": 297,
+      "y": 281,
+      "w": 107,
+      "h": 18
+     },
+     "component": "Card",
+     "src": "App.jsx:8:7",
+     "text": "Wrapped kettle"
+    }
+   ],
+   "createdAt": 1783970112677
+  }
+ ]
+}
